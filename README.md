@@ -1,5 +1,15 @@
 # restful-api
-restful api by python
+
+### 程式語言
+python作為開發端語言，並使用了 Flask 框架。
+
+### 資料庫
+MySQL
+
+### 開發和部署環境
+
+Docker部署Redis&MySQL,
+NGINX 作為Web伺服器和反向代理，
 
 是否有在專案的 README.md 中紀錄以下兩個問題，並且有將 README.md 推上 github?
 
