@@ -13,16 +13,14 @@
 
 ##### 說明你的專案達成哪些需求及怎麼部署的，例如： 完成哪些功能、需求？ 快取做到什麼程度？ 排程工作的結果是否有儲存到 S3 或其他地方？
 
-# 前置作業安裝
+## 前置作業安裝
 
-## Docker
 安裝docker
 
 ```bash
 sudo apt update
 sudo apt install docker.io
 ```
-## Redis
 
 安裝redis
 
@@ -36,6 +34,12 @@ sudo docker pull redis
 sudo docker run --name gary-redis -p 6379:6379 -d redis
 ```
 
+> 
+> 
+> - 這裡，**`gary-redis`** 是您給容器指定的名稱，您可以將其更改為您喜歡的任何名稱。
+> - **`d`** 參數表示以「分離模式」運行，即容器將在後台運行。
+> - 如果您需要將 Redis 的端口映射到主機，可以添加 **`p`** 參數，如 **`p 6379:6379`**（這將把容器的 6379 端口映射到主機的 6379 端口
+
 驗證redis
 
 ```bash
@@ -46,8 +50,62 @@ sudo docker ps
 sudo docker exec -it gary-redis redis-cli
 ```
 
+- Redis 基本指令
+    
+    當然可以下是一些基本命令的示例：
+    
+    ### SET 命令
+    
+    `SET` 命令用於在 Redis 中儲存一個鍵值對。例如：
+    
+    ```bash
+    SET mykey "Hello"
+    
+    ```
+    
+    這個命令會在 Redis 中創建一個名為 `mykey` 的鍵，其值為 `"Hello"`。
+    
+    ### GET 命令
+    
+    `GET` 命令用於從 Redis 中獲取鍵的值。如果鍵存在，它會返回鍵的值；如果鍵不存在，它會返回 nil。例如：
+    
+    ```bash
+    GET mykey
+    
+    ```
+    
+    如果 `mykey` 存在，這個命令將返回之前設置的 `"Hello"`。
+    
+    ### DEL 命令
+    
+    `DEL` 命令用於從 Redis 中刪除指定的鍵。例如：
+    
+    ```bash
+    DEL mykey
+    
+    ```
+    
+    這個命令將刪除名為 `mykey` 的鍵。
+    
+    ### KEYS 命令
+    
+    `KEYS` 命令用於查找所有符合給定模式的鍵。例如：
+    
+    ```bash
+    KEYS *
+    
+    ```
+    
+    這個命令將列出 Redis 中所有的鍵。
+    
+    ### 其他命令
+    
+    Redis 還支持許多其他命令，用於管理列表、集合、有序集合等數據結構。您可以在 [Redis 命令參考](https://redis.io/commands/) 中找到完整的命令列表和更詳細的說明。
+    
 
-## MYSQL
+---
+
+# MYSQL
 
 - docke 安裝mysql
 
@@ -301,30 +359,217 @@ sudo apt install python3-pip
 sudo pip install mysql-connector-python
 ```
 
-## 加入 Redis
-
-- Redis 配置
+vim app.py
 
 ```bash
+from flask import Flask
+import mysql.connector
+from mysql.connector import Error
+
+app = Flask(__name__)
+
+def get_db_connection():
+    connection = None
+    try:
+        connection = mysql.connector.connect(
+            host='127.0.0.1',
+            user='root',
+            password='G@ry1111',
+            database='test'
+        )
+    except Error as e:
+        print("Error while connecting to MySQL", e)
+    return connection
+
+@app.route('/')
+def hello_world():
+    connection = get_db_connection()
+    if connection:
+        cursor = connection.cursor()
+        # 假设有一个表格 'test_table' 且其中有列 'message'
+        cursor.execute("SELECT message FROM test_table;")
+        message = cursor.fetchone()[0]
+        cursor.close()
+        connection.close()
+        return f'Hello, Gary! Welcome to Flask. Message from MySQL: {message}'
+    else:
+        return 'Hello, Gary! Welcome to Flask. But Database connection failed.'
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=80, debug=True)
+```
+
+創建sql
+
+```bash
+use test;
+
+CREATE TABLE tracking_info (
+    sno VARCHAR(50) PRIMARY KEY,
+    tracking_status VARCHAR(100),
+    estimated_delivery DATE
+);
+
+CREATE TABLE tracking_details (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    tracking_sno VARCHAR(50),
+    date DATE,
+    time TIME,
+    status VARCHAR(100),
+    location_id INT,
+    location_title VARCHAR(100),
+    FOREIGN KEY (tracking_sno) REFERENCES tracking_info(sno)
+);
+```
+
+安裝Redis cli
+
+```bash
+pip install redis
+```
+
+修改app.py
+
+```bash
+from flask import Flask, request, jsonify
+import mysql.connector
+from mysql.connector import Error
+import redis
+import json
+import random
+from datetime import datetime
+
+app = Flask(__name__)
+
+# Redis 连接配置
 redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
-```  
 
-- 從 Redis 獲取緩存數據
+def get_db_connection():
+    connection = None
+    try:
+        connection = mysql.connector.connect(
+            host='127.0.0.1',
+            user='root',
+            password='G@ry1111',
+            database='test'
+        )
+    except Error as e:
+        print("Error while connecting to MySQL", e)
+    return connection
 
-```bash
+def serialize_dates(package):
+    # 將日期對象轉換為字符串
+    if package.get('estimated_delivery') and not isinstance(package['estimated_delivery'], str):
+        package['estimated_delivery'] = package['estimated_delivery'].strftime("%Y-%m-%d")
+    if 'details' in package:
+        for detail in package['details']:
+            if detail.get('date') and not isinstance(detail['date'], str):
+                detail['date'] = detail['date'].strftime("%Y-%m-%d")
+    return package
+
+@app.route('/query', methods=['GET'])
+def query_package():
+    sno = request.args.get('sno')
+
+    # 尝试从 Redis 中获取缓存数据
     cached_package = redis_client.get(sno)
     if cached_package:
         return jsonify({"status": "success", "data": json.loads(cached_package), "error": None})
-```
 
-- 將資料儲存到 Redis 快取並設定過期時間(1小時)
-```bash
-redis_client.setex(sno, 3600, json.dumps(package))
-```                
+    connection = get_db_connection()
+    if connection:
+        try:
+            cursor = connection.cursor(dictionary=True)
+            cursor.execute("SELECT sno, tracking_status, estimated_delivery, recipient_id, current_location_id FROM tracking_master WHERE sno = %s", (sno,))
+            package = cursor.fetchone()
+
+            if package:
+                cursor.execute("SELECT * FROM recipients WHERE id = %s", (package['recipient_id'],))
+                recipient = cursor.fetchone()
+                package['recipient'] = recipient
+
+                cursor.execute("SELECT * FROM locations WHERE location_id = %s", (package['current_location_id'],))
+                current_location = cursor.fetchone()
+                package['current_location'] = current_location
+
+                cursor.execute("SELECT * FROM tracking_details WHERE sno = %s ORDER BY date, time", (sno,))
+                details = cursor.fetchall()
+                package['details'] = details        
+
+                del package['current_location_id']
+                del package['recipient_id']
+
+                package = serialize_dates(package)
+
+                # 将数据存储到 Redis 缓存并设置过期时间（例如 1 小时）
+                redis_client.setex(sno, 3600, json.dumps(package))
+
+                response = {
+                    "status": "success",
+                    "data": package,
+                    "error": None
+                }
+                return jsonify(response)
+            else:
+                return jsonify({"status": "error", "error": "Package not found"}), 404
+        except Error as e:
+            print("Error:", e)
+            return jsonify({"status": "error", "error": "Internal Server Error"}), 500
+        finally:
+            cursor.close()
+            connection.close()
+    else:
+        return jsonify({"status": "error", "error": "Database connection failed"}), 500
+
+def generate_random_tracking_id():
+    # 这是一个简单的示例，您可以根据需要调整
+    return random.randint(100000, 999999)
+
+@app.route('/fake', methods=['GET'])
+def generate_fake_data():
+    num = int(request.args.get('num', 1))
+    connection = get_db_connection()
+    fake_data = []
+    if connection:
+        try:
+            cursor = connection.cursor()
+            for _ in range(num):
+                sno = generate_random_tracking_id()
+                status = random.choice(['Created', 'Package Received', 'In Transit', 'Out for Delivery', 'Delivery Attempted', 'Delivered', 'Returned to Sender', 'Exception'])
+                estimated_delivery = datetime.now().strftime("%Y-%m-%d")
+                recipient_id = random.randint(1234, 1251)  # 假定收件人ID范围
+                current_location_id = random.choice([1, 3, 4, 6, 7, 8, 9, 11, 13, 14, 15, 18, 19, 21, 23, 24])  # 假定地点ID范围
+
+                # 插入数据到 tracking_master 表
+                cursor.execute("INSERT INTO tracking_master (sno, tracking_status, estimated_delivery, recipient_id, current_location_id) VALUES (%s, %s, %s, %s, %s)", (sno, status, estimated_delivery, recipient_id, current_location_id))
+
+                # 添加假的追踪详情
+                cursor.execute("INSERT INTO tracking_details (sno, date, time, status, location_id) VALUES (%s, %s, %s, %s, %s)", (sno, estimated_delivery, '12:00', status, current_location_id))
+
+                fake_data.append({"sno": sno, "tracking_status": status})
+            connection.commit()
+            response = {
+                "status": "success",
+                "data": fake_data,
+                "error": None
+            }
+            return jsonify(response)
+        except Error as e:
+            print("Error:", e)
+            return jsonify({"status": "error", "error": "Internal Server Error"}), 500
+        finally:
+            cursor.close()
+            connection.close()
+    else:
+        return jsonify({"status": "error", "error": "Database connection failed"}), 500
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=80, debug=True)
+```
 
 ---
 
-## 加入 報表
+## 報表
 
 沒有另外寫腳本，改成打一個request 去print
 
