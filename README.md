@@ -11,7 +11,7 @@
 - Docker 部署 Redis & MySQL,
 - NGINX 作為Web伺服器和反向代理
 
-# 說明你的專案達成哪些需求及怎麼部署的，例如： 完成哪些功能、需求？ 快取做到什麼程度？ 排程工作的結果是否有儲存到 S3 或其他地方？
+##### 說明你的專案達成哪些需求及怎麼部署的，例如： 完成哪些功能、需求？ 快取做到什麼程度？ 排程工作的結果是否有儲存到 S3 或其他地方？
 
 ## 前置作業安裝
 
@@ -116,7 +116,7 @@ sudo docker pull mysql
 運行 MySQL 容器：
 
 ```bash
-sudo docker run --name gary-mysql -e MYSQL_ROOT_PASSWORD=G@ry1111 -d mysql
+sudo docker run --name gary-mysql -e MYSQL_ROOT_PASSWORD=G@ry1111 -p 3306:3306 -d mysql
 ```
 
 > 
@@ -124,14 +124,9 @@ sudo docker run --name gary-mysql -e MYSQL_ROOT_PASSWORD=G@ry1111 -d mysql
 > - -name some-mysql 表示容器的名稱將被設置為 gary-mysql。
 > -e MYSQL_ROOT_PASSWORD=yourpassword 是設置 MySQL root 用戶的密碼。
 > -d 表示容器將在後台運行。
+> - 端口映射:將容器的 3306 端口映射到 Docker
 
 端口映射:
-
-打算從 Docker 主機之外訪問 MySQL，您需要映射端口。以下命令將容器的 3306 端口映射到 Docker 主機的同一端口：
-
-```bash
-sudo docker run --name gary-mysql -e MYSQL_ROOT_PASSWORD=G@ry1111 -p 3306:3306 -d mysql
-```
 
 驗證mysql
 
@@ -349,8 +344,6 @@ sudo ln -s /etc/nginx/sites-available/flask_app.conf /etc/nginx/sites-enabled/
 ```
 
 ---
-
-Mysql 可以被外部工具連線
 
 安裝**mysql-connector-python**
 
@@ -570,11 +563,58 @@ if __name__ == '__main__':
 
 ---
 
-### 報表
+## 報表
+
+沒有另外寫腳本，改成打一個request 去print
+
+```bash
+def generate_tracking_report():
+    connection = get_db_connection()
+    report = {}
+    if connection:
+        try:
+            cursor = connection.cursor()
+            query = "SELECT tracking_status, COUNT(*) as count FROM tracking_master GROUP BY tracking_status"
+            cursor.execute(query)
+            result = cursor.fetchall()
+
+            expected_statuses = ["Created", "Package Received", "In Transit", "Out for Delivery", "Delivery Attempted", "Delivered", "Returned to Sender", "Exception"]
+            report['trackingSummary'] = {status: 0 for status in expected_statuses}
+            for status, count in result:
+                if status in report['trackingSummary']:
+                    report['trackingSummary'][status] = count
+        except Error as e:
+            print("Error:", e)
+        finally:
+            cursor.close()
+            connection.close()
+    report['created_dt'] = datetime.now().isoformat() + "Z"
+    return report
+```
+
+跟 route
+
+```bash
+@app.route('/generate_report', methods=['GET'])    
+def report_route():
+    report = generate_tracking_report()
+    print(json.dumps(report, indent=2))  
+    return jsonify(report)
+```
+
+test
+
+```bash
+curl "http://52.199.200.114/generate_report"
+```
+
+## Crontab
 
 ```bash
 sudo crontab -e
 ```
+
+用curl 
 
 ```bash
 0 0,8,16 * * * /usr/bin/curl http://localhost:5000/generate_report
@@ -587,10 +627,25 @@ sudo crontab -e
 sudo crontab -l
 ```
 
-test
+改時區
 
 ```bash
-curl "http://52.199.200.114/generate_report"
+sudo timedatectl set-timezone Asia/Taipei
 ```
 
-改時區
+確認是否成功執行
+
+寫個兩分鐘執行一次
+
+```bash
+## test 
+*/2 * * * * /usr/bin/curl http://localhost:5000/generate_report
+```
+
+看 crontab log
+
+```bash
+tail -f  /var/log/syslog -n 5
+```
+
+看 flask log 也有成功被打到回應
